@@ -3,7 +3,7 @@ return {
 	{ "folke/neoconf.nvim", cmd = "Neoconf" },
 	"rafamadriz/friendly-snippets",
 	"NeogitOrg/neogit",
-	"echasnovski/mini.pick",
+	"nvim-mini/mini.pick",
 	"sindrets/diffview.nvim",
 	"ibhagwan/fzf-lua",
 }
