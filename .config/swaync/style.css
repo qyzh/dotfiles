@@ -1,42 +1,42 @@
 /* Cursor-inspired Color Palette */
 :root {
   /* Background colors */
-  --bg-primary: rgba(0,0,0,0.8);
-  --bg-secondary: rgba(26,26,26,0.8);
-  --bg-tertiary: rgba(42,42,42,0.8);
-  --bg-hover: rgba(51,51,51,0.8);
-  --bg-active: rgba(64,64,64,0.8);
+  --bg-primary: rgba(0, 0, 0, 0.6);
+  --bg-secondary: rgba(26, 26, 26, 0.8);
+  --bg-tertiary: rgba(42, 42, 42, 0.8);
+  --bg-hover: rgba(51, 51, 51, 0.8);
+  --bg-active: rgba(64, 64, 64, 0.8);
 
   /* Text colors */
   --text-primary: #ffffff;
   --text-secondary: #b4b4b4;
   --text-muted: #6b6b6b;
-  
+
   /* Accent colors */
   --accent-primary: #8b5cf6;
   --accent-secondary: #a855f7;
   --accent-tertiary: #c084fc;
-  
+
   /* Blue accents */
   --blue-primary: #3b82f6;
   --blue-secondary: #60a5fa;
-  
+
   /* Status colors */
   --success: #10b981;
   --warning: #f59e0b;
   --error: #ef4444;
   --info: #06b6d4;
-  
+
   /* Border colors */
   --border-primary: #404040;
   --border-secondary: #2a2a2a;
   --border-accent: #8b5cf6;
-  
+
   /* Shadow */
   --shadow-light: rgba(0, 0, 0, 0.1);
   --shadow-medium: rgba(0, 0, 0, 0.2);
   --shadow-heavy: rgba(0, 0, 0, 0.4);
-  
+
   /* Legacy variables for compatibility */
   --noti-bg: var(--bg-secondary);
   --noti-bg-alt: var(--bg-tertiary);
@@ -82,6 +82,7 @@
     transform: translateX(100%);
     opacity: 0;
   }
+
   to {
     transform: translateX(0);
     opacity: 1;
@@ -93,6 +94,7 @@
     transform: translateY(-20px);
     opacity: 0;
   }
+
   to {
     transform: translateY(0);
     opacity: 1;
@@ -121,10 +123,10 @@
 
 .notification {
   background: var(--bg-secondary);
-  padding: 12px 16px;
+  border-radius: 0px;
   border: 1px solid var(--border-primary);
   margin: 8px;
-  box-shadow: 0 4px 12px var(--shadow-medium);
+  padding: 12px 16px;
   transition: all 0.2s ease;
 }
 
@@ -168,12 +170,6 @@
   color: var(--text-primary);
   background: var(--accent-primary);
   transform: translateY(-1px);
-}
-
-.notification-default-action {
-  margin: 8px;
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
 }
 
 .notification-action:first-child {
@@ -250,6 +246,7 @@
   background: var(--bg-primary);
   border: 1px solid var(--border-primary);
   color: var(--text-primary);
+  border-radius: 0px;
   box-shadow: 0 8px 32px var(--shadow-heavy);
 }
 
@@ -295,23 +292,23 @@
 }
 
 .widget-dnd {
-  background: var(--bg-tertiary);
   padding: 12px 16px;
   margin: 8px;
   font-size: 14px;
+  border-radius: 0px;
   color: var(--text-secondary);
 }
 
 .widget-dnd>switch {
-  border: 2px solid var(--accent-primary);
+  border: 1px solid var(--accent-primary);
   background: var(--bg-secondary);
   min-width: 44px;
   min-height: 24px;
 }
 
 .widget-dnd>switch:checked {
-  background: var(--accent-primary);
-  border: 2px solid var(--accent-primary);
+  background: darkred;
+  border: 2px solid firebrick;
 }
 
 .widget-dnd>switch slider {
@@ -335,23 +332,14 @@
 
 .widget-mpris {
   color: var(--text-primary);
-  background: var(--bg-secondary);
-  padding: 12px 16px;
   margin: 8px;
-  border: 1px solid var(--border-primary);
 }
 
 .widget-mpris>box>button {
-  background: var(--bg-tertiary);
-  border: 1px solid var(--border-primary);
   color: var(--text-primary);
   padding: 8px;
+  border-radius: 0px;
   transition: all 0.2s ease;
-}
-
-.widget-mpris>box>button:hover {
-  background: var(--bg-hover);
-  border-color: var(--accent-primary);
 }
 
 .widget-mpris-player {
@@ -375,12 +363,11 @@
   color: var(--text-secondary);
   padding: 12px;
   margin: 8px;
-  background: var(--bg-tertiary);
 }
 
 .widget-buttons-grid>flowbox>flowboxchild>button {
   margin: 4px;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   color: var(--text-primary);
   border: 1px solid var(--border-primary);
   padding: 12px;
@@ -420,7 +407,6 @@
 }
 
 .widget-volume {
-  background: var(--bg-tertiary);
   padding: 12px;
   margin: 8px;
   font-size: 18px;
@@ -449,7 +435,6 @@
 }
 
 .widget-backlight {
-  background: var(--bg-tertiary);
   padding: 12px;
   margin: 8px;
   font-size: 18px;
