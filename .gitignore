@@ -1,0 +1,14 @@
+# Runtime artifacts — jangan commmitted
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Editor/OS
+*.swp
+.DS_Store
+
+# Secrets (add when needed)
+.env
+
+# Local overrides
+config/qutebrowser/autoconfig.yml

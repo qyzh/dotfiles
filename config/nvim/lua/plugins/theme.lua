@@ -1,0 +1,1 @@
+/home/kynux/.config/omarchy/current/theme/neovim.lua
