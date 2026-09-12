@@ -12,3 +12,8 @@ __pycache__/
 
 # Local overrides
 config/qutebrowser/autoconfig.yml
+# Hermes skill runtime state (auto-managed, not dotfile material)
+skills/.usage.json
+skills/.usage.json.lock
+skills/.curator_state
+skills/.bundled_manifest
