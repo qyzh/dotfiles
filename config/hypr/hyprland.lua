@@ -27,3 +27,21 @@ require("default.hypr.toggles")
 
 -- Add any other personal Hyprland configuration below.
 -- o.window("qemu", { workspace = "5" })
+--
+hl.window_rule({
+  match = { class = "steam" },
+  workspace = "8 silent"
+})
+hl.window_rule({
+  match = { class = "dota2" },
+  immediate = true,
+})
+hl.window_rule({
+  match = { class = "Spotify" },
+  workspace = "5"
+}
+)
+hl.window_rule({
+  match = { class = "vesktop", "chrome-discord.com__channels_@me-Default" },
+  workspace = "5 silent"
+})

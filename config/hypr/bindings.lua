@@ -27,3 +27,15 @@
 -- o.bind("SUPER + SHIFT + S", nil, "omarchy-capture-screenshot")
 -- o.bind("SUPER + H", nil, "voxtype record toggle")
 -- o.bind("SUPER + PERIOD", nil, "omarchy-shell shell toggle omarchy.emojis")
+
+-- === Strata file manager overrides (installed 2026-09-13) ===
+-- Replace stock Nautilus shortcuts so Omarchy launches Strata directly.
+-- Source: https://github.com/lgse/strata#make-strata-the-omarchy-file-manager
+-- Backup of this file before edit: bindings.lua.bak.1789235147
+
+-- Use Strata instead of Nautilus for Omarchy's file-manager shortcuts.
+hl.unbind("SUPER + SHIFT + F")
+hl.unbind("SUPER + ALT + SHIFT + F")
+o.bind("SUPER + SHIFT + F", "File manager", { launch = "strata" })
+o.bind("SUPER + ALT + SHIFT + F", "File manager (cwd)",
+  "uwsm-app -- strata \"$(omarchy-cmd-terminal-cwd)\"")
