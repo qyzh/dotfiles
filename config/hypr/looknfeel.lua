@@ -14,16 +14,18 @@ hl.config({
 })
 
 -- https://wiki.hypr.land/Configuring/Basics/Variables/#decoration
--- hl.config({
---   decoration = {
---     -- Use round window corners.
---     rounding = 8,
---
---     -- Dim unfocused windows (0.0 = no dim, 1.0 = fully dimmed).
---     dim_inactive = true,
---     dim_strength = 0.15,
---   },
--- })
+hl.config({
+  decoration = {
+    blur = {
+      enabled = true,
+      size = 8,
+      passes = 3,
+      brightness = 0.8,
+      contrast = 0.9,
+      new_optimizations = true
+    },
+  },
+})
 
 -- https://wiki.hypr.land/Configuring/Basics/Variables/#animations
 -- hl.config({
@@ -47,4 +49,29 @@ hl.config({
 --     -- See only one column per screen instead of two.
 --     column_width = 0.97,
 --   },
+-- })
+--
+--
+
+-- hl.window_rule({
+--   match = { class = "steam" },
+--   workspace = "8 silent"
+-- })
+-- hl.window_rule({
+--   match = { class = "dota2" },
+--   immediate = true,
+-- })
+-- hl.window_rule({
+--   match = { class = "Spotify" },
+--   workspace = "5"
+-- })
+--
+-- hl.layer_rule({
+--   match = { namespace = "omarchy-spotlight" },
+--   blur = true,
+--   ignore_alpha = 0.4,
+-- })
+-- hl.window_rule({
+--   match = { class = "vesktop", "chrome-discord.com__channels_@me-Default" },
+--   workspace = "5 silent"
 -- })

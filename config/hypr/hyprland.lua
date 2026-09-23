@@ -39,8 +39,12 @@ hl.window_rule({
 hl.window_rule({
   match = { class = "Spotify" },
   workspace = "5"
-}
-)
+})
+hl.layer_rule({
+  match = { namespace = "omarchy-spotlight" },
+  blur = true,
+  ignore_alpha = 0.4,
+})
 hl.window_rule({
   match = { class = "vesktop", "chrome-discord.com__channels_@me-Default" },
   workspace = "5 silent"
