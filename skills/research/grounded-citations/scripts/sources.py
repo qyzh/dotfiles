@@ -24,9 +24,22 @@ can check the chain themselves.  Claims from model knowledge are declared with
 an ``[unverified]`` marker rather than silently blended in.
 
 Ledger path resolution (first wins):
-  --ledger PATH
+  --ledger PATH        (before or after the subcommand)
+  $SOURCES_LEDGER
   $HERMES_CITATION_LEDGER
   $HERMES_HOME/cache/citations/ledger.json
+
+A per-document ledger (``--ledger out/.sources-<slug>-<date>.json``) needs no
+``reset``: ``add`` creates it on first use.
+
+``verify`` reports every problem with its draft line number and the offending
+sentence, so a revision loop can fix it mechanically:
+  - FAIL  ``[n]`` cited in prose but absent from the ledger (orphan citation)
+  - FAIL  ``[[CITE_n]]`` placeholder left over from a protected rewrite pass
+  - FAIL  ledger source never cited (only with ``--require-all-cited``;
+          otherwise a warning)
+  - warn  sentence with a statistic (percent, currency, magnitude, multiplier)
+          but no ``[n]`` (a failure under ``--strict``)
 """
 
 from __future__ import annotations
@@ -55,6 +68,35 @@ _URL_IN_TEXT_RE = re.compile(r"https?://[^\s\"'<>)\]}]+")
 _FENCE_RE = re.compile(r"^\s*(?:```|~~~)")
 # Explicit declaration that a claim comes from model knowledge, not a source.
 _UNVERIFIED_RE = re.compile(r"\[unverified\]", re.IGNORECASE)
+# Placeholder a rewrite pass (e.g. humanizer) wraps citations in so it cannot
+# drop or renumber them.  Must be restored to ``[n]`` before verify.
+_CITE_TOKEN_RE = re.compile(r"\[\[CITE_(\d{1,4})\]\]")
+_FRONTMATTER_RE = re.compile(r"^---\s*$")
+
+# Statistic detectors for the uncited-number check.  Deliberately skip bare
+# integers so years (2025), versions (GPT-4, Python 3.12) and list numbering
+# never trip it; a number only counts when it carries a statistic's shape.
+_NUM = r"\d(?:[\d.,]*\d)?"
+_STAT_RES = (
+    # 42%, 4.5 %, 30 percent, 30 persen
+    re.compile(rf"{_NUM}\s?(?:%|percent\b|per cent\b|persen\b)", re.IGNORECASE),
+    # $5, US$ 1.2, € 30, £4, Rp 15.000, Rp15jt, IDR 2.000
+    re.compile(rf"(?:US\$|[$€£¥₹]|\bRp\.?|\bIDR|\bUSD|\bEUR)\s?{_NUM}"),
+    # 1,200 USD, 300 dollars, 5000 rupiah
+    re.compile(rf"{_NUM}\s?(?:USD|EUR|IDR|dollars?|euros?|rupiah)\b", re.IGNORECASE),
+    # 3 million, 1.2 billion, 40 juta, 2 miliar.  Bare 70B / 3M are skipped:
+    # they are as often model sizes and names as metrics ($1.5B is still caught).
+    re.compile(
+        rf"{_NUM}\s?(?:thousand|million|billion|trillion|ribu|juta|jt|miliar|milyar|triliun)\b",
+        re.IGNORECASE,
+    ),
+    # 3x faster, 10× more
+    re.compile(rf"{_NUM}\s?[x×](?![\w])"),
+    # grouped thousands: 12,000 / 1,250,000 / 12.000 (id-ID)
+    re.compile(r"(?<![\w.,])\d{1,3}(?:,\d{3})+(?![\d,])|(?<![\w.,])\d{1,3}(?:\.\d{3})+(?![\d.])"),
+)
+# Text that must not count as a statistic: citation markers, links, code.
+_STAT_NOISE_RE = re.compile(r"\[\d{1,4}\]|\[\[CITE_\d{1,4}\]\]|https?://\S+|`[^`]*`|\]\([^)]*\)")
 
 
 # ---------------------------------------------------------------------------
@@ -65,9 +107,10 @@ _UNVERIFIED_RE = re.compile(r"\[unverified\]", re.IGNORECASE)
 def resolve_ledger_path(explicit: str | None = None) -> Path:
     if explicit:
         return Path(explicit).expanduser()
-    env = os.environ.get("HERMES_CITATION_LEDGER", "").strip()
-    if env:
-        return Path(env).expanduser()
+    for var in ("SOURCES_LEDGER", "HERMES_CITATION_LEDGER"):
+        env = os.environ.get(var, "").strip()
+        if env:
+            return Path(env).expanduser()
     return get_hermes_home() / "cache" / "citations" / "ledger.json"
 
 
@@ -89,7 +132,11 @@ def load_ledger(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"version": SCHEMA_VERSION, "sources": []}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw = path.read_text(encoding="utf-8")
+        # A zero-byte file (e.g. from mktemp/touch) is a fresh ledger, not damage.
+        if not raw.strip():
+            return {"version": SCHEMA_VERSION, "sources": []}
+        data = json.loads(raw)
     except (json.JSONDecodeError, OSError) as exc:
         raise SystemExit(f"error: ledger at {path} is unreadable ({exc}); run `reset` to start over")
     if not isinstance(data, dict) or not isinstance(data.get("sources"), list):
@@ -333,12 +380,13 @@ def render_sources(
 # ---------------------------------------------------------------------------
 
 
-def _split_draft(text: str) -> tuple[str, dict[int, str]]:
-    """Split a draft into (prose, sources_block_map).
+def _body_lines(text: str) -> tuple[list[tuple[int, str]], dict[int, str]]:
+    """Split a draft into (numbered body lines, sources_block_map).
 
     The sources block is everything after the last ``Sources`` header; its
     ``[n] url`` lines are parsed out so they aren't counted as prose citations.
-    Fenced code blocks are dropped from prose.
+    A leading YAML frontmatter block, fenced code blocks and HTML comments are
+    dropped from the body.  Line numbers are 1-based draft line numbers.
     """
     lines = text.splitlines()
     header_idx = -1
@@ -352,18 +400,53 @@ def _split_draft(text: str) -> tuple[str, dict[int, str]]:
             if m:
                 url_match = _URL_IN_TEXT_RE.search(line)
                 listed[int(m.group(1))] = url_match.group(0) if url_match else m.group(2)
-        body_lines = lines[:header_idx]
+        end = header_idx
     else:
-        body_lines = lines
-    prose: list[str] = []
+        end = len(lines)
+    start = 0
+    if lines and _FRONTMATTER_RE.match(lines[0]):
+        for j in range(1, end):
+            if _FRONTMATTER_RE.match(lines[j]):
+                start = j + 1
+                break
+    body: list[tuple[int, str]] = []
     in_fence = False
-    for line in body_lines:
-        if _FENCE_RE.match(line):
+    in_comment = False
+    for i in range(start, end):
+        line = lines[i]
+        if not in_comment and _FENCE_RE.match(line):
             in_fence = not in_fence
             continue
-        if not in_fence:
-            prose.append(line)
-    return "\n".join(prose), listed
+        if in_fence:
+            continue
+        # Drop HTML comments (template instructions), possibly multi-line.
+        kept = ""
+        rest = line
+        while rest:
+            if in_comment:
+                close = rest.find("-->")
+                if close < 0:
+                    rest = ""
+                else:
+                    in_comment = False
+                    rest = rest[close + 3:]
+            else:
+                open_ = rest.find("<!--")
+                if open_ < 0:
+                    kept += rest
+                    rest = ""
+                else:
+                    kept += rest[:open_]
+                    in_comment = True
+                    rest = rest[open_ + 4:]
+        body.append((i + 1, kept))
+    return body, listed
+
+
+def _split_draft(text: str) -> tuple[str, dict[int, str]]:
+    """Split a draft into (prose, sources_block_map); see ``_body_lines``."""
+    body, listed = _body_lines(text)
+    return "\n".join(line for _, line in body), listed
 
 
 def _strip_sources_block(text: str) -> str:
@@ -383,20 +466,97 @@ def _strip_sources_block(text: str) -> str:
     return "\n".join(lines[:header_idx])
 
 
-def _sentences(prose: str) -> list[str]:
-    """Rough sentence split over prose lines, skipping headings and tables."""
-    out: list[str] = []
-    for line in prose.splitlines():
+_LIST_ITEM_RE = re.compile(r"^(?:[-*+]|\d{1,3}[.)])\s+")
+# Sentence end: terminal punctuation, then any trailing citation markers, then
+# whitespace or end of text.  "fact.[1] Next" splits after "[1]", so a
+# citation stays with the sentence it supports.
+_SENT_END_RE = re.compile(r"[.!?]+(?:\[\d{1,4}\]|\[\[CITE_\d{1,4}\]\])*(?=\s|$)")
+_ABBREV = {"e.g", "i.e", "vs", "etc", "dr", "mr", "mrs", "ms", "no", "dll", "dsb", "dst", "yth", "approx", "ca"}
+
+
+def _units(body: list[tuple[int, str]]) -> list[tuple[int, str, str]]:
+    """Group body lines into located units: (line, text, kind).
+
+    ``kind`` is ``heading``, ``table`` or ``prose``.  Prose lines are joined
+    into paragraphs (a list item or blockquote line starts a new one) and split
+    into sentences; each sentence carries the draft line it starts on.
+    """
+    units: list[tuple[int, str, str]] = []
+    para: list[tuple[int, str]] = []
+
+    def flush() -> None:
+        if not para:
+            return
+        text = ""
+        offsets: list[tuple[int, int]] = []  # (char offset, line number)
+        for ln, seg in para:
+            if text:
+                text += " "
+            offsets.append((len(text), ln))
+            text += seg
+        para.clear()
+
+        def line_at(pos: int) -> int:
+            ln = offsets[0][1]
+            for off, num in offsets:
+                if off <= pos:
+                    ln = num
+            return ln
+
+        start = 0
+        for m in _SENT_END_RE.finditer(text):
+            prev_word = text[start:m.start()].rsplit(None, 1)[-1:] or [""]
+            if prev_word[0].casefold().rstrip(".") in _ABBREV:
+                continue
+            chunk = text[start:m.end()]
+            lead = len(chunk) - len(chunk.lstrip())
+            if chunk.strip():
+                units.append((line_at(start + lead), chunk.strip(), "prose"))
+            start = m.end()
+        tail = text[start:]
+        if tail.strip():
+            lead = len(tail) - len(tail.lstrip())
+            units.append((line_at(start + lead), tail.strip(), "prose"))
+
+    for ln, line in body:
         stripped = line.strip()
-        if not stripped or stripped.startswith("#") or stripped.startswith("|"):
+        if not stripped:
+            flush()
+            continue
+        if stripped.startswith("#"):
+            flush()
+            units.append((ln, stripped, "heading"))
+            continue
+        if stripped.startswith("|"):
+            flush()
+            units.append((ln, stripped, "table"))
             continue
         if stripped.startswith(">"):
+            flush()
             stripped = stripped.lstrip("> ").strip()
-        for part in re.split(r"(?<=[.!?])\s+", stripped):
-            part = part.strip()
-            if len(part.split()) >= 4:
-                out.append(part)
-    return out
+        elif _LIST_ITEM_RE.match(stripped):
+            flush()
+            stripped = _LIST_ITEM_RE.sub("", stripped, count=1)
+        if stripped:
+            para.append((ln, stripped))
+    flush()
+    return units
+
+
+def _has_statistic(sentence: str) -> bool:
+    """True when the sentence states a number in a statistic's shape."""
+    text = _STAT_NOISE_RE.sub(" ", sentence)
+    return any(r.search(text) for r in _STAT_RES)
+
+
+def _sentences(prose: str) -> list[str]:
+    """Prose sentences of at least 4 words (headings and tables skipped)."""
+    body = [(i + 1, line) for i, line in enumerate(prose.splitlines())]
+    return [t for _, t, kind in _units(body) if kind == "prose" and len(t.split()) >= 4]
+
+
+def _clip(text: str, limit: int = 240) -> str:
+    return text if len(text) <= limit else text[: limit - 1] + "…"
 
 
 def verify_draft(
@@ -405,24 +565,36 @@ def verify_draft(
     strict: bool = False,
     min_coverage: float | None = None,
     require_evidence: bool = False,
+    require_all_cited: bool = False,
 ) -> tuple[int, list[str], list[str]]:
-    """Return (exit_code, errors, warnings)."""
+    """Return (exit_code, errors, warnings).
+
+    Line-level findings are formatted ``line N: <problem>: "<sentence>"`` so a
+    revision loop can locate and fix each one.
+    """
     text = draft_path.read_text(encoding="utf-8")
-    prose, listed = _split_draft(text)
+    body, listed = _body_lines(text)
+    units = _units(body)
     by_id = {s["id"]: s for s in sources}
 
     errors: list[str] = []
     warnings: list[str] = []
 
-    cited = [int(m) for m in _CITE_RE.findall(prose)]
-    cited_set = set(cited)
-
-    unknown = sorted(i for i in cited_set if i not in by_id)
-    if unknown:
-        errors.append(
-            "citations not in the ledger (hallucinated or renumbered): "
-            + ", ".join(f"[{i}]" for i in unknown)
-        )
+    cited_set: set[int] = set()
+    for ln, unit, _kind in units:
+        for m in _CITE_RE.finditer(unit):
+            sid = int(m.group(1))
+            cited_set.add(sid)
+            if sid not in by_id:
+                errors.append(
+                    f'line {ln}: orphan citation [{sid}] is not in the ledger '
+                    f'(hallucinated or renumbered): "{_clip(unit)}"'
+                )
+        for m in _CITE_TOKEN_RE.finditer(unit):
+            errors.append(
+                f"line {ln}: unrestored placeholder [[CITE_{m.group(1)}]] — "
+                f'turn it back into [{m.group(1)}]: "{_clip(unit)}"'
+            )
 
     if cited_set and not listed:
         errors.append("draft cites sources but has no `Sources:` block — run `render --cited-in`")
@@ -454,12 +626,29 @@ def verify_draft(
 
     registered_uncited = sorted(set(by_id) - cited_set)
     if registered_uncited:
-        warnings.append(
-            "registered in the ledger but not cited in this draft: "
-            + ", ".join(f"[{i}]" for i in registered_uncited)
-        )
+        if require_all_cited:
+            for sid in registered_uncited:
+                entry = by_id[sid]
+                title = f" — {entry['title']}" if entry.get("title") else ""
+                errors.append(
+                    f"ledger source [{sid}] {entry['url']}{title} is never cited in the "
+                    "draft — cite it where it supports or disputes a claim (e.g. as a "
+                    "counter-source)"
+                )
+        else:
+            warnings.append(
+                "registered in the ledger but not cited in this draft: "
+                + ", ".join(f"[{i}]" for i in registered_uncited)
+            )
 
-    sentences = _sentences(prose)
+    for ln, unit, kind in units:
+        if kind == "prose" and not _CITE_RE.search(unit) and _has_statistic(unit):
+            # --strict promotes this to a failure; report it as one directly.
+            (errors if strict else warnings).append(
+                f'line {ln}: statistic without a [n] citation: "{_clip(unit)}"'
+            )
+
+    sentences = [u for _, u, kind in units if kind == "prose" and len(u.split()) >= 4]
     cited_sentences = [s for s in sentences if _CITE_RE.search(s)]
     unverified_sentences = [s for s in sentences if _UNVERIFIED_RE.search(s)]
     covered = [s for s in sentences if _CITE_RE.search(s) or _UNVERIFIED_RE.search(s)]
@@ -521,21 +710,26 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="sources.py", description="Citation ledger for grounded answers and documents."
     )
-    parser.add_argument("--ledger", help="ledger file path (overrides env / default)")
+    ledger_help = "ledger file path (overrides $SOURCES_LEDGER / $HERMES_CITATION_LEDGER / default)"
+    parser.add_argument("--ledger", help=ledger_help)
+    # Every subcommand also takes --ledger after its name.  SUPPRESS keeps an
+    # omitted sub-level flag from clobbering one given before the subcommand.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--ledger", default=argparse.SUPPRESS, help=ledger_help)
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("reset", help="start a clean ledger")
+    sub.add_parser("reset", help="start a clean ledger", parents=[common])
 
-    p_add = sub.add_parser("add", help="register source url(s), print their ids")
+    p_add = sub.add_parser("add", parents=[common], help="register source url(s), print their ids")
     p_add.add_argument("urls", nargs="+")
     p_add.add_argument("--title", help="title for the source (single-url calls)")
     p_add.add_argument("--accessed", help="access date (default: today)")
     p_add.add_argument("--json", action="store_true", help="emit JSON instead of ids")
 
-    p_ing = sub.add_parser("ingest", help="register every url in JSON tool output")
+    p_ing = sub.add_parser("ingest", parents=[common], help="register every url in JSON tool output")
     p_ing.add_argument("file", help="JSON file, or - for stdin")
 
-    p_q = sub.add_parser("quote", help="attach verbatim supporting evidence to a source")
+    p_q = sub.add_parser("quote", parents=[common], help="attach verbatim supporting evidence to a source")
     p_q.add_argument("id", type=int, help="ledger id of the source the quote supports")
     p_q.add_argument("--text", required=True, help="the exact quote, copied from the page")
     p_q.add_argument(
@@ -545,10 +739,10 @@ def main(argv: list[str] | None = None) -> int:
         help="file with the fetched page text (or - for stdin) the quote must appear in",
     )
 
-    p_list = sub.add_parser("list", help="show the ledger")
+    p_list = sub.add_parser("list", parents=[common], help="show the ledger")
     p_list.add_argument("--json", action="store_true")
 
-    p_render = sub.add_parser("render", help="render a Sources block")
+    p_render = sub.add_parser("render", parents=[common], help="render a Sources block")
     p_render.add_argument(
         "--style", default="markdown", choices=["markdown", "plain", "footnotes", "bibtex", "evidence"]
     )
@@ -559,7 +753,7 @@ def main(argv: list[str] | None = None) -> int:
         help="rewrite this draft's Sources block in place (implies --cited-in on it)",
     )
 
-    p_ver = sub.add_parser("verify", help="check a draft's citations against the ledger")
+    p_ver = sub.add_parser("verify", parents=[common], help="check a draft's citations against the ledger")
     p_ver.add_argument("draft")
     p_ver.add_argument("--strict", action="store_true", help="treat warnings as failures")
     p_ver.add_argument("--min-coverage", type=float, help="required cited-sentence share, e.g. 0.5")
@@ -567,6 +761,11 @@ def main(argv: list[str] | None = None) -> int:
         "--evidence",
         action="store_true",
         help="require every cited source to carry at least one verbatim quote",
+    )
+    p_ver.add_argument(
+        "--require-all-cited",
+        action="store_true",
+        help="fail when a ledger source is never cited (use with a per-document ledger)",
     )
 
     args = parser.parse_args(argv)
@@ -662,6 +861,7 @@ def main(argv: list[str] | None = None) -> int:
             strict=args.strict,
             min_coverage=args.min_coverage,
             require_evidence=args.evidence,
+            require_all_cited=args.require_all_cited,
         )
         for w in warnings:
             prefix = "info" if w.startswith("stats: ") else "warn"

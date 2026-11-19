@@ -51,7 +51,9 @@ Retrieval comes from whatever is configured: `web_search`, `web_extract`,
 `browser_navigate`, or `terminal` (curl, CLIs).
 
 Ledger location: `$HERMES_HOME/cache/citations/ledger.json` (profile-aware).
-Override per task with `--ledger <path>` or `HERMES_CITATION_LEDGER`.
+Override per task with `--ledger <path>` (before or after the subcommand),
+`SOURCES_LEDGER`, or `HERMES_CITATION_LEDGER`. A per-document ledger needs no
+`reset`: `add` creates it on first use.
 
 ## How to Run
 
@@ -82,7 +84,7 @@ id within a ledger, so ids stay stable across many search/extract rounds.
 | Render the Sources block | `sources.py render [--style markdown\|plain\|footnotes\|bibtex\|evidence] [--only 1,3]` |
 | Render only what a draft cites | `sources.py render --cited-in draft.md` |
 | Rewrite a draft's Sources block in place | `sources.py render --replace-in draft.md` |
-| Check a draft's citations | `sources.py verify draft.md [--strict] [--min-coverage 0.6] [--evidence]` |
+| Check a draft's citations | `sources.py verify draft.md [--strict] [--min-coverage 0.6] [--evidence] [--require-all-cited]` |
 
 ## Procedure
 
@@ -118,8 +120,11 @@ For non-markdown targets pick the matching `--style` and follow
 PDF/LaTeX, a Sources slide in decks, per-page source lists in wiki output).
 
 ⑤ **Verify before delivering** — `sources.py verify <draft>` exits non-zero on
-unknown ids, on a Sources block that disagrees with the ledger, or (with
-`--min-coverage`) on prose that is too thinly cited. Fix and re-run.
+unknown ids, leftover `[[CITE_n]]` placeholders, a Sources block that disagrees
+with the ledger, or (with `--min-coverage`) prose that is too thinly cited.
+Sentences stating a statistic without `[n]` are warnings (failures under
+`--strict`); uncited ledger sources fail with `--require-all-cited`. Findings
+print as `line N: <problem>: "<sentence>"`. Fix and re-run.
 
 ⑥ **Chat answers** follow the same steps with the draft in your reply: register
 sources, cite inline, end with the rendered `Sources:` list. For a short answer
